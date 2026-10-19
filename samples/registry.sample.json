@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "application": "Universal MCP Manager 0.1.0",
+  "exportedAt": "2026-10-19T00:00:00Z",
+  "includesSecrets": false,
+  "includesLiteralEnvValues": true,
+  "warnings": [
+    "Sample document. It contains no credentials: the remote example uses an {env:...} reference that each harness resolves at launch."
+  ],
+  "servers": [
+    {
+      "id": "sample-filesystem",
+      "name": "filesystem",
+      "description": "Reference filesystem MCP server launched over stdio.",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env": {
+        "ROOT": {
+          "value": "C:/data",
+          "kind": "literal"
+        }
+      },
+      "headers": {},
+      "url": null,
+      "cwd": "C:/data",
+      "enabled": true,
+      "targets": ["opencode", "cline", "antigravity"],
+      "tags": ["sample", "stdio"],
+      "notes": "Written to every supported harness. The working directory is dropped by Cline and Antigravity with a warning.",
+      "createdAt": "2026-10-19T00:00:00Z",
+      "updatedAt": "2026-10-19T00:00:00Z",
+      "lastSyncAt": null
+    },
+    {
+      "id": "sample-github",
+      "name": "github",
+      "description": "Remote GitHub MCP server using a bearer token from an environment reference.",
+      "transport": "streamableHttp",
+      "command": null,
+      "args": [],
+      "env": {},
+      "headers": {
+        "Authorization": {
+          "value": "{env:GITHUB_TOKEN}",
+          "kind": "envRef"
+        }
+      },
+      "url": "https://mcp.example.test/github",
+      "cwd": null,
+      "enabled": true,
+      "targets": ["opencode", "cline"],
+      "tags": ["sample", "remote"],
+      "notes": "The reference is written verbatim; set GITHUB_TOKEN in the environment that launches the harness. Alternatively store the token as a secret in this app.",
+      "createdAt": "2026-10-19T00:00:00Z",
+      "updatedAt": "2026-10-19T00:00:00Z",
+      "lastSyncAt": null
+    },
+    {
+      "id": "sample-legacy-sse",
+      "name": "legacy-search",
+      "description": "Legacy SSE endpoint, targeted only at harnesses that still accept the SSE transport.",
+      "transport": "sse",
+      "command": null,
+      "args": [],
+      "env": {},
+      "headers": {},
+      "url": "https://mcp.example.test/sse",
+      "cwd": null,
+      "enabled": true,
+      "targets": ["cline", "antigravity"],
+      "tags": ["sample", "sse"],
+      "notes": "OpenCode does not support SSE; targeting it there would be reported as a skipped entry.",
+      "createdAt": "2026-10-19T00:00:00Z",
+      "updatedAt": "2026-10-19T00:00:00Z",
+      "lastSyncAt": null
+    },
+    {
+      "id": "sample-retired",
+      "name": "retired-demo",
+      "description": "Disabled definition kept in the registry as documentation.",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["C:/tools/demo-mcp/server.js"],
+      "env": {},
+      "headers": {},
+      "url": null,
+      "cwd": null,
+      "enabled": false,
+      "targets": ["opencode"],
+      "tags": ["sample", "disabled"],
+      "notes": "Excluded from exports unless 'include disabled' is checked, and written with enabled: false.",
+      "createdAt": "2026-10-19T00:00:00Z",
+      "updatedAt": "2026-10-19T00:00:00Z",
+      "lastSyncAt": null
+    }
+  ]
+}

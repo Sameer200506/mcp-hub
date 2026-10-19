@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Minimal capability set: core IPC, file/folder dialogs and opening paths in the OS shell. No arbitrary filesystem or shell access is granted to the frontend.","local":true,"windows":["main"],"permissions":["core:default","dialog:default","opener:default"]}}
