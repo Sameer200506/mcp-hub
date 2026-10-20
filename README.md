@@ -27,6 +27,7 @@ configuration files of the coding-agent harnesses you already use.
 | Secrets | Windows Credential Manager; values are masked in every preview, diff, export and log; `{env:NAME}` / `{file:path}` references stay references |
 | Drift detection | A file watcher marks externally modified configs; nothing is ever overwritten automatically |
 | Import / export | Portable registry JSON with redaction, merge or replace |
+| MCP Store | One-click installs from the official MCP registry plus GitHub-hosted agent skills; network only on user action; installs still go through the validated registry and preview/confirm sync path |
 
 Supported harnesses and their exact schemas: **[docs/HARNESS-SUPPORT.md](docs/HARNESS-SUPPORT.md)**.
 Security model and secrets handling: **[SECURITY.md](SECURITY.md)**.
@@ -89,6 +90,7 @@ Everything lives in your user profile — nothing is written into the repository
 | --- | --- |
 | `%APPDATA%\UniversalMcpManager\registry.sqlite3` | registry, settings, sync history, backup index, secret *references* (never secret values) |
 | `%APPDATA%\UniversalMcpManager\backups\` | timestamped backups, named `<harness>__<timestamp>__<filename>` |
+| `%APPDATA%\UniversalMcpManager\skills\` | skills installed from the MCP Store (the folder name is the skill name) |
 | `%APPDATA%\UniversalMcpManager\logs\universal-mcp-manager.log` | daily-rotating log file (path also shown in Settings) |
 
 The data and backup directories are configurable in **Settings**. Backups are never pruned
@@ -144,6 +146,45 @@ real credentials:
 
 ---
 
+## MCP Store and agent skills
+
+**MCP Store** in the sidebar opens a locally cached catalog with two tabs:
+
+* **MCP Servers** — the [official MCP registry](https://registry.modelcontextprotocol.io) is
+  cached in SQLite. *Refresh catalog* fetches the first pages; *Load more* pulls the next registry
+  page. Cards show the registry name, version, package/remote type and whether the entry declares
+  secrets. **Add** converts an entry into a normal registry record:
+  `npx -y pkg@version` for npm, `uvx --from pkg==version pkg` for PyPI,
+  `docker run -i --rm image` for OCI, or the advertised Streamable HTTP / SSE URL. Entries with
+  environment variables open the review dialog so credentials are entered and stored through the
+  existing Credential Manager path (secrets are never prefilled or written to SQLite).
+  Installing a server **never writes a harness file**; preview and synchronize as usual.
+* **Agent Skills** — a skill is a folder with a `SKILL.md` (YAML frontmatter). Default sources are
+  `openclaw/openclaw` and `anthropics/skills`; both are editable in **Store settings**. *Refresh
+  skills* reads the GitHub tree and caches the name, description and file list. Installing
+  downloads every file into the app library (`%APPDATA%\UniversalMcpManager\skills\<name>\`) and
+  optionally copies it to the configured harness folders (`~\.config\opencode\skills\<name>`,
+  `~\.claude\skills\<name>`, or a custom absolute path). Downloads are limited to 2 MiB per file,
+  12 MiB total and 250 files; paths containing `..`, drive/ADS colons or absolute prefixes are
+  rejected. Existing copies are only replaced when the **Overwrite** switch is on.
+
+**Store settings** edits the GitHub sources (owner/repo, branch, skills folder), deploy targets and
+which targets are preselected. Uninstalling removes the library copy and every deployed copy
+recorded at install time that is still inside a configured target.
+
+Network access only happens when you click **Refresh**, **Load more**, or **Install**. The webview
+makes no requests (its CSP allows none); Rust contacts `registry.modelcontextprotocol.io`,
+`api.github.com` and `raw.githubusercontent.com`. GitHub's unauthenticated API limit is 60
+requests/hour — a skills refresh costs two API requests per source plus one raw request per
+`SKILL.md` description.
+
+> The `link.mcpmarket.com/mcp` link from the original brief answers HTTP 401 (authentication
+> required) and its public server pages publish marketing copy rather than install metadata, so the
+> store uses the official registry instead. Server cards link to the project repository or website
+> when the registry lists one.
+
+---
+
 ## Tests
 
 | Suite | Where | Covers |
@@ -151,8 +192,10 @@ real credentials:
 | Rust integration — adapters | `src-tauri/tests/adapter_fixtures.rs` | exact JSON per harness, enable/disable conventions, blank-mapping safety |
 | Rust integration — sync engine | `src-tauri/tests/sync_pipeline.rs` | merge/preserve, backups, stale hashes, external edits, idempotency, partial failures, conflicts, removals, restore, tampering |
 | Rust integration — registry & secrets | `src-tauri/tests/registry_and_secrets.rs` | CRUD, duplicate detection, import/export redaction, sample-file import, live Credential Manager round-trip |
-| Rust unit tests | `#[cfg(test)]` modules in `src-tauri/src/**` | JSONC handling, diffing, safe-I/O primitives, path policy, error scrubbing |
+| Rust integration — store cache | `src-tauri/tests/store_cache.rs` | registry cache upsert/search/cursor, skill cache replacement, installed-skill records, store settings validation |
+| Rust unit tests | `#[cfg(test)]` modules in `src-tauri/src/**` | JSONC handling, diffing, safe-I/O primitives, path policy, error scrubbing, registry-to-definition mapping, SKILL.md frontmatter, download path safety, deployment copying |
 | Frontend | `src/**/*.test.ts(x)` | masking helpers, JSON highlighting (HTML escaping) |
+| Manual network smoke test (ignored) | `src-tauri/tests/live_store.rs` | real registry page parse + prefill, real GitHub skills refresh/install/uninstall; run explicitly with `cargo test --manifest-path src-tauri/Cargo.toml --test live_store -- --ignored --nocapture` |
 
 All tests run against `tempfile` workspaces and per-harness path overrides; they never touch your
 real harness files. Two guarded tests exercise the real Windows Credential Manager and clean up
@@ -230,6 +273,10 @@ The full list lives in [docs/HARNESS-SUPPORT.md](docs/HARNESS-SUPPORT.md#limitat
 * Harness schemas are verified against vendor documentation and covered by fixture tests, but they
   cannot be validated against every application build; adapters whose schema cannot be verified are
   reported as `PendingVerification` instead of guessing.
+* The store catalog is a local cache refreshed on demand (no background updates). The registry is
+  paginated, so deeper results require repeated **Load more** clicks. GitHub's unauthenticated API
+  limit (60 requests/hour) applies to skills refreshes. Skills are files only: the app never runs
+  skill scripts or installs their dependencies.
 
 ---
 
@@ -240,7 +287,8 @@ src/                      React UI (never writes files; all mutations go through
 src/services/api.ts       typed wrapper over the invoke() surface
 src-tauri/src/
   adapters/               per-harness schema knowledge (opencode, cline, antigravity, generic JSON)
-  services/               sync engine, safe I/O, backups, validation, diffing, watcher, registry
+  services/               sync engine, safe I/O, backups, validation, diffing, watcher, registry,
+                          store clients (official MCP registry, GitHub skills)
   security/               path policy, credential store
   database.rs             SQLite (registry, settings, history, backup index, secret refs)
   commands.rs             the Tauri command surface

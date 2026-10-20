@@ -10,7 +10,8 @@ use serde::Serialize;
 
 use crate::errors::{AppError, AppResult};
 use crate::models::{
-    BackupInfo, HarnessState, McpServer, SyncHistoryEntry, TransportType, VarValue,
+    BackupInfo, HarnessState, InstalledSkill, McpServer, SkillEntry, StoreEntry, SyncHistoryEntry,
+    TransportType, VarValue,
 };
 
 /// Directory used for the SQLite database, logs and backups.
@@ -122,6 +123,54 @@ impl Db {
                 last_error TEXT,
                 last_known_hash TEXT,
                 externally_modified INTEGER NOT NULL DEFAULT 0
+            );
+
+            -- Locally cached catalog for the MCP store (official registry).
+            CREATE TABLE IF NOT EXISTS store_entries (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                name TEXT NOT NULL,
+                title TEXT,
+                description TEXT NOT NULL DEFAULT '',
+                version TEXT,
+                homepage TEXT,
+                repository TEXT,
+                packages_json TEXT NOT NULL DEFAULT '[]',
+                remotes_json TEXT NOT NULL DEFAULT '[]',
+                fetched_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_store_entries_source ON store_entries (source);
+            CREATE INDEX IF NOT EXISTS idx_store_entries_name ON store_entries (name COLLATE NOCASE);
+
+            CREATE TABLE IF NOT EXISTS store_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            -- Skills cached from GitHub-hosted skill repositories.
+            CREATE TABLE IF NOT EXISTS skill_entries (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                source_label TEXT NOT NULL DEFAULT '',
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                path TEXT NOT NULL,
+                files_json TEXT NOT NULL DEFAULT '[]',
+                fetched_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_skill_entries_source ON skill_entries (source_id);
+
+            -- Skills installed into the app library and optionally deployed.
+            CREATE TABLE IF NOT EXISTS installed_skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                library_path TEXT NOT NULL,
+                deployed_paths_json TEXT NOT NULL DEFAULT '[]',
+                installed_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             "#,
         )?;
@@ -498,6 +547,324 @@ impl Db {
     pub fn delete_setting(&self, key: &str) -> AppResult<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+            Ok(())
+        })
+    }
+
+    // ------------------------------------------------------------------ store
+
+    fn row_to_store_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoreEntry> {
+        let packages_json: String = row.get("packages_json")?;
+        let remotes_json: String = row.get("remotes_json")?;
+        Ok(StoreEntry {
+            id: row.get("id")?,
+            source: row.get("source")?,
+            name: row.get("name")?,
+            title: row.get("title")?,
+            description: row.get("description")?,
+            version: row.get("version")?,
+            homepage: row.get("homepage")?,
+            repository: row.get("repository")?,
+            packages: serde_json::from_str(&packages_json).unwrap_or_default(),
+            remotes: serde_json::from_str(&remotes_json).unwrap_or_default(),
+            fetched_at: row.get("fetched_at")?,
+        })
+    }
+
+    pub fn upsert_store_entry(&self, entry: &StoreEntry) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                r#"INSERT INTO store_entries
+                   (id, source, name, title, description, version, homepage, repository,
+                    packages_json, remotes_json, fetched_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                   ON CONFLICT(id) DO UPDATE SET
+                     source = excluded.source,
+                     name = excluded.name,
+                     title = excluded.title,
+                     description = excluded.description,
+                     version = excluded.version,
+                     homepage = excluded.homepage,
+                     repository = excluded.repository,
+                     packages_json = excluded.packages_json,
+                     remotes_json = excluded.remotes_json,
+                     fetched_at = excluded.fetched_at"#,
+                params![
+                    entry.id,
+                    entry.source,
+                    entry.name,
+                    entry.title,
+                    entry.description,
+                    entry.version,
+                    entry.homepage,
+                    entry.repository,
+                    serde_json::to_string(&entry.packages)?,
+                    serde_json::to_string(&entry.remotes)?,
+                    entry.fetched_at,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_store_entries(
+        &self,
+        query: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<Vec<StoreEntry>> {
+        let needle = query.map(|value| format!("%{}%", value.trim()));
+        self.with_conn(|conn| {
+            let mut out = Vec::new();
+            if let Some(needle) = needle {
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM store_entries
+                     WHERE name LIKE ?1 OR IFNULL(title, '') LIKE ?1 OR description LIKE ?1
+                     ORDER BY name COLLATE NOCASE ASC LIMIT ?2 OFFSET ?3",
+                )?;
+                let rows = stmt.query_map(params![needle, limit, offset], Self::row_to_store_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM store_entries
+                     ORDER BY name COLLATE NOCASE ASC LIMIT ?1 OFFSET ?2",
+                )?;
+                let rows = stmt.query_map(params![limit, offset], Self::row_to_store_entry)?;
+                for row in rows {
+                    out.push(row?);
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn count_store_entries(&self, query: Option<&str>) -> AppResult<usize> {
+        let needle = query.map(|value| format!("%{}%", value.trim()));
+        self.with_conn(|conn| {
+            let count: i64 = if let Some(needle) = needle {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM store_entries
+                     WHERE name LIKE ?1 OR IFNULL(title, '') LIKE ?1 OR description LIKE ?1",
+                    params![needle],
+                    |row| row.get(0),
+                )?
+            } else {
+                conn.query_row("SELECT COUNT(*) FROM store_entries", [], |row| row.get(0))?
+            };
+            Ok(count as usize)
+        })
+    }
+
+    pub fn get_store_entry(&self, id: &str) -> AppResult<StoreEntry> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT * FROM store_entries WHERE id = ?1",
+                params![id],
+                Self::row_to_store_entry,
+            )
+            .optional()?
+            .ok_or_else(|| AppError::not_found(format!("Store entry {id} is not in the local cache. Refresh the catalog first.")))
+        })
+    }
+
+    pub fn clear_store_source(&self, source: &str) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM store_entries WHERE source = ?1", params![source])?;
+            Ok(())
+        })
+    }
+
+    pub fn store_last_refreshed(&self, source: &str) -> AppResult<Option<String>> {
+        self.with_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT MAX(fetched_at) FROM store_entries WHERE source = ?1",
+                    params![source],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+    }
+
+    pub fn get_store_meta(&self, key: &str) -> AppResult<Option<String>> {
+        self.with_conn(|conn| {
+            Ok(conn
+                .query_row("SELECT value FROM store_meta WHERE key = ?1", params![key], |row| row.get(0))
+                .optional()?)
+        })
+    }
+
+    pub fn set_store_meta(&self, key: &str, value: Option<&str>) -> AppResult<()> {
+        self.with_conn(|conn| {
+            match value {
+                Some(value) => {
+                    conn.execute(
+                        "INSERT INTO store_meta (key, value) VALUES (?1, ?2)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        params![key, value],
+                    )?;
+                }
+                None => {
+                    conn.execute("DELETE FROM store_meta WHERE key = ?1", params![key])?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    // ----------------------------------------------------------------- skills
+
+    fn row_to_skill_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<SkillEntry> {
+        let files_json: String = row.get("files_json")?;
+        Ok(SkillEntry {
+            id: row.get("id")?,
+            source_id: row.get("source_id")?,
+            source_label: row.get("source_label")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            path: row.get("path")?,
+            files: serde_json::from_str(&files_json).unwrap_or_default(),
+            fetched_at: row.get("fetched_at")?,
+        })
+    }
+
+    /// Replace every cached skill of one source with a freshly fetched list.
+    pub fn replace_source_skills(&self, source_id: &str, entries: &[SkillEntry]) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM skill_entries WHERE source_id = ?1", params![source_id])?;
+            for entry in entries {
+                conn.execute(
+                    r#"INSERT OR REPLACE INTO skill_entries
+                       (id, source_id, source_label, name, description, path, files_json, fetched_at)
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                    params![
+                        entry.id,
+                        entry.source_id,
+                        entry.source_label,
+                        entry.name,
+                        entry.description,
+                        entry.path,
+                        serde_json::to_string(&entry.files)?,
+                        entry.fetched_at,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn list_skill_entries(
+        &self,
+        source_id: Option<&str>,
+        query: Option<&str>,
+    ) -> AppResult<Vec<SkillEntry>> {
+        let needle = query.map(|value| format!("%{}%", value.trim()));
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM skill_entries
+                 WHERE (?1 IS NULL OR source_id = ?1)
+                   AND (?2 IS NULL OR name LIKE ?2 OR description LIKE ?2)
+                 ORDER BY name COLLATE NOCASE ASC",
+            )?;
+            let rows = stmt.query_map(params![source_id, needle], Self::row_to_skill_entry)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn get_skill_entry(&self, id: &str) -> AppResult<SkillEntry> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT * FROM skill_entries WHERE id = ?1",
+                params![id],
+                Self::row_to_skill_entry,
+            )
+            .optional()?
+            .ok_or_else(|| AppError::not_found(format!("Skill {id} is not in the local cache. Refresh the skills catalog first.")))
+        })
+    }
+
+    fn row_to_installed_skill(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledSkill> {
+        let deployed_json: String = row.get("deployed_paths_json")?;
+        Ok(InstalledSkill {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            source_id: row.get("source_id")?,
+            source_path: row.get("source_path")?,
+            library_path: row.get("library_path")?,
+            deployed_paths: serde_json::from_str(&deployed_json).unwrap_or_default(),
+            installed_at: row.get("installed_at")?,
+            updated_at: row.get("updated_at")?,
+        })
+    }
+
+    pub fn list_installed_skills(&self) -> AppResult<Vec<InstalledSkill>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT * FROM installed_skills ORDER BY name COLLATE NOCASE ASC",
+            )?;
+            let rows = stmt.query_map([], Self::row_to_installed_skill)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn get_installed_skill(&self, id: &str) -> AppResult<Option<InstalledSkill>> {
+        self.with_conn(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT * FROM installed_skills WHERE id = ?1",
+                    params![id],
+                    Self::row_to_installed_skill,
+                )
+                .optional()?)
+        })
+    }
+
+    pub fn upsert_installed_skill(&self, skill: &InstalledSkill) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                r#"INSERT INTO installed_skills
+                   (id, name, description, source_id, source_path, library_path,
+                    deployed_paths_json, installed_at, updated_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                   ON CONFLICT(id) DO UPDATE SET
+                     name = excluded.name,
+                     description = excluded.description,
+                     source_id = excluded.source_id,
+                     source_path = excluded.source_path,
+                     library_path = excluded.library_path,
+                     deployed_paths_json = excluded.deployed_paths_json,
+                     updated_at = excluded.updated_at"#,
+                params![
+                    skill.id,
+                    skill.name,
+                    skill.description,
+                    skill.source_id,
+                    skill.source_path,
+                    skill.library_path,
+                    serde_json::to_string(&skill.deployed_paths)?,
+                    skill.installed_at,
+                    skill.updated_at,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_installed_skill(&self, id: &str) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM installed_skills WHERE id = ?1", params![id])?;
             Ok(())
         })
     }

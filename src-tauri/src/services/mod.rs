@@ -5,4 +5,6 @@ pub mod diff;
 pub mod file_watcher;
 pub mod harness_detection;
 pub mod mcp_registry;
+pub mod mcp_store;
 pub mod safe_io;
+pub mod skill_store;

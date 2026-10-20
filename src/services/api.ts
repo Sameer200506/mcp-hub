@@ -15,6 +15,14 @@ import type {
   RegistryExportRequest,
   RegistryImportRequest,
   RestoreResult,
+  SkillCatalogPage,
+  SkillInstallRequest,
+  SkillInstallResult,
+  SkillRefreshResult,
+  StoreCatalogPage,
+  StoreRefreshResult,
+  StoreSettings,
+  InstalledSkill,
   SyncHistoryEntry,
   SyncReport,
   SyncRequest,
@@ -79,6 +87,31 @@ export const api = {
     invoke<string>("export_registry", { request }),
   importRegistry: (request: RegistryImportRequest) =>
     invoke<ImportResult>("import_registry", { request }),
+
+  // -------------------------------------------------------------------- store
+  refreshStoreCatalog: (pages = 1, restart = false) =>
+    invoke<StoreRefreshResult>("refresh_store_catalog", { pages, restart }),
+  listStoreCatalog: (query?: string, limit = 500, offset = 0) =>
+    invoke<StoreCatalogPage>("list_store_catalog", { query: query ?? null, limit, offset }),
+  storePrefillServer: (entryId: string) =>
+    invoke<McpServerInput>("store_prefill_server", { entryId }),
+
+  // ------------------------------------------------------------- agent skills
+  getStoreSettings: () => invoke<StoreSettings>("get_store_settings"),
+  updateStoreSettings: (settings: StoreSettings) =>
+    invoke<StoreSettings>("update_store_settings", { settings }),
+  refreshSkills: (sourceId?: string) =>
+    invoke<SkillRefreshResult>("refresh_skills", { sourceId: sourceId ?? null }),
+  listSkillCatalog: (sourceId?: string, query?: string) =>
+    invoke<SkillCatalogPage>("list_skill_catalog", {
+      sourceId: sourceId ?? null,
+      query: query ?? null,
+    }),
+  installSkill: (request: SkillInstallRequest) =>
+    invoke<SkillInstallResult>("install_skill", { request }),
+  listInstalledSkills: () => invoke<InstalledSkill[]>("list_installed_skills"),
+  uninstallSkill: (skillId: string, removeDeployed = true) =>
+    invoke<void>("uninstall_skill", { skillId, removeDeployed }),
 
   // ----------------------------------------------------------------- settings
   getAppSettings: () => invoke<AppSettings>("get_app_settings"),

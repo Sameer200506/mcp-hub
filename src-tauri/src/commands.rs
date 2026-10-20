@@ -27,14 +27,16 @@ use crate::errors::{AppError, AppResult};
 use crate::models::{
     AdapterStatus, AppSettings, BackupInfo, ConfigInspection, ConnectionTestResult, DashboardStats,
     DefinitionPreview, HarnessEntries, HarnessEntryInfo, HarnessInfo, HarnessState, ImportResult,
-    McpServer, McpServerInput, PreviewReport, RecentError, RecentServer, RegistryExportRequest,
-    RegistryImportRequest, RestoreResult, SyncHistoryEntry, SyncReport, SyncRequest, TransportType,
-    ValidationReport, VarKind, REDACTED,
+    InstalledSkill, McpServer, McpServerInput, PreviewReport, RecentError, RecentServer,
+    RegistryExportRequest, RegistryImportRequest, RestoreResult, SkillCatalogPage,
+    SkillInstallRequest, SkillInstallResult, SkillRefreshResult, StoreCatalogPage, StoreRefreshResult,
+    StoreSettings, SyncHistoryEntry, SyncReport, SyncRequest, TransportType, ValidationReport,
+    VarKind, REDACTED,
 };
 use crate::services::config_sync::{self, SyncContext};
 use crate::services::config_validation::validate_input;
 use crate::services::harness_detection::{self, find_adapter, hints_for};
-use crate::services::mcp_registry;
+use crate::services::{mcp_registry, mcp_store, skill_store};
 use crate::services::safe_io::read_snapshot;
 use crate::state::{AppState, StateRefs};
 
@@ -514,6 +516,125 @@ pub async fn import_registry(
 ) -> Result<ImportResult, AppError> {
     let refs = state.refs.clone();
     blocking(move || mcp_registry::import_registry(&refs.db, &refs.secrets, &request)).await
+}
+
+// ------------------------------------------------------------------ MCP store
+
+#[tauri::command]
+pub async fn refresh_store_catalog(
+    state: State<'_, AppState>,
+    pages: Option<u32>,
+    restart: Option<bool>,
+) -> Result<StoreRefreshResult, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || {
+        mcp_store::refresh_catalog(&refs.db, pages.unwrap_or(1), restart.unwrap_or(false))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_store_catalog(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<StoreCatalogPage, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || mcp_store::catalog_page(&refs.db, query, limit, offset)).await
+}
+
+#[tauri::command]
+pub async fn store_prefill_server(
+    state: State<'_, AppState>,
+    entry_id: String,
+) -> Result<McpServerInput, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || {
+        let entry = refs.db.get_store_entry(&entry_id)?;
+        Ok(mcp_store::entry_prefill(&entry))
+    })
+    .await
+}
+
+// --------------------------------------------------------------- agent skills
+
+#[tauri::command]
+pub async fn get_store_settings(state: State<'_, AppState>) -> Result<StoreSettings, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || {
+        let settings = skill_store::load_settings(&refs.db)?;
+        // Persist the defaults once so the settings dialog edits a stored value.
+        if refs
+            .db
+            .get_setting_json::<StoreSettings>(skill_store::STORE_SETTINGS_KEY)?
+            .is_none()
+        {
+            refs.db
+                .set_setting_json(skill_store::STORE_SETTINGS_KEY, &settings)?;
+        }
+        Ok(settings)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_store_settings(
+    state: State<'_, AppState>,
+    settings: StoreSettings,
+) -> Result<StoreSettings, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || skill_store::save_settings(&refs.db, &settings)).await
+}
+
+#[tauri::command]
+pub async fn refresh_skills(
+    state: State<'_, AppState>,
+    source_id: Option<String>,
+) -> Result<SkillRefreshResult, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || skill_store::refresh_skills(&refs.db, source_id)).await
+}
+
+#[tauri::command]
+pub async fn list_skill_catalog(
+    state: State<'_, AppState>,
+    source_id: Option<String>,
+    query: Option<String>,
+) -> Result<SkillCatalogPage, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || skill_store::skill_catalog(&refs.db, source_id, query)).await
+}
+
+#[tauri::command]
+pub async fn install_skill(
+    state: State<'_, AppState>,
+    request: SkillInstallRequest,
+) -> Result<SkillInstallResult, AppError> {
+    let refs = state.refs.clone();
+    let data_dir = PathBuf::from(refs.settings_snapshot().data_dir);
+    blocking(move || skill_store::install_skill(&refs.db, &data_dir, &request)).await
+}
+
+#[tauri::command]
+pub async fn list_installed_skills(
+    state: State<'_, AppState>,
+) -> Result<Vec<InstalledSkill>, AppError> {
+    let refs = state.refs.clone();
+    blocking(move || refs.db.list_installed_skills()).await
+}
+
+#[tauri::command]
+pub async fn uninstall_skill(
+    state: State<'_, AppState>,
+    skill_id: String,
+    remove_deployed: Option<bool>,
+) -> Result<(), AppError> {
+    let refs = state.refs.clone();
+    blocking(move || {
+        skill_store::uninstall_skill(&refs.db, &skill_id, remove_deployed.unwrap_or(true))
+    })
+    .await
 }
 
 // --------------------------------------------------------------------- settings

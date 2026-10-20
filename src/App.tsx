@@ -4,6 +4,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { AppShell, type PageKey } from "@/components/layout/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { Servers } from "@/pages/Servers";
+import { Store } from "@/pages/Store";
 import { Agents } from "@/pages/Agents";
 import { History } from "@/pages/History";
 import { SettingsPage } from "@/pages/Settings";
@@ -38,6 +39,7 @@ export default function App() {
             <Dashboard registry={registry} onNavigate={setPage} />
           ) : null}
           {page === "servers" ? <Servers registry={registry} /> : null}
+          {page === "store" ? <Store registry={registry} /> : null}
           {page === "agents" ? <Agents registry={registry} /> : null}
           {page === "history" ? <History registry={registry} /> : null}
           {page === "settings" ? (

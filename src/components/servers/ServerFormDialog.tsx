@@ -182,12 +182,15 @@ export function ServerFormDialog({
   onOpenChange,
   server,
   harnesses,
+  initialInput,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   server: McpServer | null;
   harnesses: HarnessInfo[];
+  /** Prefilled definition, e.g. from the MCP store. Ignored when `server` is set. */
+  initialInput?: McpServerInput | null;
   onSaved: () => Promise<void> | void;
 }) {
   const { toast } = useToast();
@@ -205,7 +208,11 @@ export function ServerFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    const next = server ? toInput(server) : emptyInput(harnesses);
+    const next = server
+      ? toInput(server)
+      : initialInput
+        ? { ...initialInput }
+        : emptyInput(harnesses);
     setInput(next);
     setEnvRows(rowsFromRecord(next.env));
     setHeaderRows(rowsFromRecord(next.headers));
@@ -214,7 +221,7 @@ export function ServerFormDialog({
     setValidation(null);
     setTestResult(null);
     setDefinitionPreview(null);
-  }, [open, server, harnesses]);
+  }, [open, server, initialInput, harnesses]);
 
   const current: McpServerInput = useMemo(
     () => ({

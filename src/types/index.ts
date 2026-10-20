@@ -377,3 +377,133 @@ export interface DashboardStats {
 export interface SyncSettingsRequest {
   settings: AppSettings;
 }
+
+// --------------------------------------------------------------- MCP store
+
+export interface StoreEnvVar {
+  name: string;
+  description: string;
+  isRequired: boolean;
+  isSecret: boolean;
+}
+
+export interface StorePackage {
+  registryType: string;
+  identifier: string;
+  version: string | null;
+  runtimeHint: string | null;
+  transportType: string;
+  environmentVariables: StoreEnvVar[];
+}
+
+export interface StoreRemote {
+  transportType: string;
+  url: string;
+}
+
+export interface StoreEntry {
+  id: string;
+  source: string;
+  name: string;
+  title: string | null;
+  description: string;
+  version: string | null;
+  homepage: string | null;
+  repository: string | null;
+  packages: StorePackage[];
+  remotes: StoreRemote[];
+  fetchedAt: string;
+}
+
+export interface StoreCatalogPage {
+  entries: StoreEntry[];
+  total: number;
+  source: string;
+  lastRefreshedAt: string | null;
+  hasMore: boolean;
+}
+
+export interface StoreRefreshResult {
+  fetched: number;
+  added: number;
+  total: number;
+  hasMore: boolean;
+  warnings: string[];
+}
+
+// ------------------------------------------------------------- agent skills
+
+export interface SkillSource {
+  id: string;
+  label: string;
+  repo: string;
+  branch: string | null;
+  path: string;
+}
+
+export interface SkillTarget {
+  id: string;
+  label: string;
+  path: string;
+}
+
+export interface StoreSettings {
+  skillSources: SkillSource[];
+  skillTargets: SkillTarget[];
+  defaultTargetIds: string[];
+}
+
+export interface SkillFile {
+  path: string;
+  url: string;
+}
+
+export interface SkillEntry {
+  id: string;
+  sourceId: string;
+  sourceLabel: string;
+  name: string;
+  description: string;
+  path: string;
+  files: SkillFile[];
+  fetchedAt: string;
+}
+
+export interface SkillCatalogPage {
+  entries: SkillEntry[];
+  total: number;
+  lastRefreshedAt: string | null;
+  warnings: string[];
+}
+
+export interface SkillRefreshResult {
+  sources: number;
+  skills: number;
+  warnings: string[];
+}
+
+export interface SkillInstallRequest {
+  skillId: string;
+  targetIds: string[];
+  overwrite: boolean;
+}
+
+export interface SkillInstallResult {
+  name: string;
+  libraryPath: string;
+  deployedPaths: string[];
+  skipped: string[];
+  warnings: string[];
+}
+
+export interface InstalledSkill {
+  id: string;
+  name: string;
+  description: string;
+  sourceId: string;
+  sourcePath: string;
+  libraryPath: string;
+  deployedPaths: string[];
+  installedAt: string;
+  updatedAt: string;
+}

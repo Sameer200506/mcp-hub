@@ -6,6 +6,7 @@
 //! here as `{ kind: "secret", value: "" }`.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -802,4 +803,269 @@ pub struct RegistryFile {
     pub servers: Vec<McpServer>,
     #[serde(default)]
     pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------- MCP store
+//
+// Types used by the built-in store: catalog entries fetched from the official
+// MCP registry and skills fetched from GitHub-hosted skill repositories.
+// Nothing here is persisted as-is in the harness files; installing an entry
+// creates a normal registry record through `mcp_registry::create_server`.
+
+/// An environment variable declared by a registry package.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreEnvVar {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_required: bool,
+    #[serde(default)]
+    pub is_secret: bool,
+}
+
+/// One installable package (npm, PyPI, OCI, ...) of a store entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StorePackage {
+    pub registry_type: String,
+    pub identifier: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub runtime_hint: Option<String>,
+    #[serde(default)]
+    pub transport_type: String,
+    #[serde(default)]
+    pub environment_variables: Vec<StoreEnvVar>,
+}
+
+/// A remote endpoint exposed by a store entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreRemote {
+    pub transport_type: String,
+    pub url: String,
+}
+
+/// A cached catalog entry from the official MCP registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreEntry {
+    pub id: String,
+    pub source: String,
+    pub name: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub packages: Vec<StorePackage>,
+    #[serde(default)]
+    pub remotes: Vec<StoreRemote>,
+    pub fetched_at: String,
+}
+
+/// One page of the locally cached store catalog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreCatalogPage {
+    pub entries: Vec<StoreEntry>,
+    pub total: usize,
+    pub source: String,
+    pub last_refreshed_at: Option<String>,
+    pub has_more: bool,
+}
+
+/// Result of refreshing the cached catalog from the registry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreRefreshResult {
+    pub fetched: usize,
+    pub added: usize,
+    pub total: usize,
+    pub has_more: bool,
+    pub warnings: Vec<String>,
+}
+
+/// A GitHub repository that publishes agent skills (`<path>/<skill>/SKILL.md`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillSource {
+    pub id: String,
+    pub label: String,
+    /// `owner/repo`
+    pub repo: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// Directory inside the repository that contains skill folders.
+    #[serde(default)]
+    pub path: String,
+}
+
+/// A directory that receives installed skills (opencode, Claude Code, custom).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillTarget {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
+/// Store preferences persisted under a dedicated settings key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreSettings {
+    #[serde(default)]
+    pub skill_sources: Vec<SkillSource>,
+    #[serde(default)]
+    pub skill_targets: Vec<SkillTarget>,
+    #[serde(default)]
+    pub default_target_ids: Vec<String>,
+}
+
+fn default_skill_sources() -> Vec<SkillSource> {
+    vec![
+        SkillSource {
+            id: "openclaw".into(),
+            label: "OpenClaw skills".into(),
+            repo: "openclaw/openclaw".into(),
+            branch: Some("main".into()),
+            path: "skills".into(),
+        },
+        SkillSource {
+            id: "anthropic".into(),
+            label: "Anthropic skills".into(),
+            repo: "anthropics/skills".into(),
+            branch: Some("main".into()),
+            path: "skills".into(),
+        },
+    ]
+}
+
+fn default_skill_targets() -> Vec<SkillTarget> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    vec![
+        SkillTarget {
+            id: "opencode".into(),
+            label: "opencode".into(),
+            path: home
+                .join(".config")
+                .join("opencode")
+                .join("skills")
+                .to_string_lossy()
+                .to_string(),
+        },
+        SkillTarget {
+            id: "claude".into(),
+            label: "Claude Code".into(),
+            path: home.join(".claude").join("skills").to_string_lossy().to_string(),
+        },
+    ]
+}
+
+impl StoreSettings {
+    pub fn defaults() -> Self {
+        Self {
+            skill_sources: default_skill_sources(),
+            skill_targets: default_skill_targets(),
+            default_target_ids: vec!["opencode".into()],
+        }
+    }
+}
+
+impl Default for StoreSettings {
+    fn default() -> Self {
+        Self::defaults()
+    }
+}
+
+/// A file that belongs to a skill folder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFile {
+    /// Path relative to the skill folder (forward slashes).
+    pub path: String,
+    pub url: String,
+}
+
+/// A cached skill from a GitHub source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillEntry {
+    pub id: String,
+    pub source_id: String,
+    pub source_label: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Path of the skill folder inside the repository.
+    pub path: String,
+    #[serde(default)]
+    pub files: Vec<SkillFile>,
+    pub fetched_at: String,
+}
+
+/// Locally cached skills plus refresh diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCatalogPage {
+    pub entries: Vec<SkillEntry>,
+    pub total: usize,
+    pub last_refreshed_at: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRefreshResult {
+    pub sources: usize,
+    pub skills: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInstallRequest {
+    pub skill_id: String,
+    #[serde(default)]
+    pub target_ids: Vec<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillInstallResult {
+    pub name: String,
+    pub library_path: String,
+    pub deployed_paths: Vec<String>,
+    #[serde(default)]
+    pub skipped: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// A skill installed into the app library and (optionally) deployed to harnesses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledSkill {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub source_id: String,
+    pub source_path: String,
+    pub library_path: String,
+    #[serde(default)]
+    pub deployed_paths: Vec<String>,
+    pub installed_at: String,
+    pub updated_at: String,
 }

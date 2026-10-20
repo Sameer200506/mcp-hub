@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Server,
   Settings as SettingsIcon,
+  Store as StoreIcon,
   Sun,
   RefreshCcw,
 } from "lucide-react";
@@ -16,11 +17,12 @@ import type { RegistryState } from "@/hooks/useRegistry";
 import type { Theme } from "@/hooks/useTheme";
 import { SyncAllButton } from "@/components/sync/SyncController";
 
-export type PageKey = "dashboard" | "servers" | "agents" | "history" | "settings";
+export type PageKey = "dashboard" | "servers" | "store" | "agents" | "history" | "settings";
 
 const NAV: { key: PageKey; label: string; icon: ReactNode }[] = [
   { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard /> },
   { key: "servers", label: "MCP Servers", icon: <Server /> },
+  { key: "store", label: "MCP Store", icon: <StoreIcon /> },
   { key: "agents", label: "Coding Agents", icon: <Cpu /> },
   { key: "history", label: "Sync History", icon: <Activity /> },
   { key: "settings", label: "Settings", icon: <SettingsIcon /> },

@@ -140,6 +140,18 @@ pub fn run() {
             // import / export
             commands::export_registry,
             commands::import_registry,
+            // MCP store
+            commands::refresh_store_catalog,
+            commands::list_store_catalog,
+            commands::store_prefill_server,
+            // agent skills
+            commands::get_store_settings,
+            commands::update_store_settings,
+            commands::refresh_skills,
+            commands::list_skill_catalog,
+            commands::install_skill,
+            commands::list_installed_skills,
+            commands::uninstall_skill,
             // settings & diagnostics
             commands::get_app_settings,
             commands::update_app_settings,
